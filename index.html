@@ -599,15 +599,15 @@ const BN_SKIP_MS = 10 * 60 * 1000;
 const binanceSkipped = sym => (binanceSkip.get(sym) || 0) > Date.now();
 const BN_HOSTS = ['https://api.binance.com', 'https://data-api.binance.vision'];
 
-function getPairStore(symbol, tf) {
-    return lruGet(pairStores, symbol + '|' + tf, () => ({ symbol, tf, rows: [], exhausted: false, missing: false, chain: Promise.resolve() }));
+function getPairStore(symbol, tf, quote = 'BTC') {
+    return lruGet(pairStores, symbol + quote + '|' + tf, () => ({ symbol, quote, tf, rows: [], exhausted: false, missing: false, chain: Promise.resolve() }), 40);
 }
 
-async function fetchKlines(symbol, interval, endTime, signal) {
+async function fetchKlines(symbol, interval, endTime, signal, quote = 'BTC') {
     let lastErr;
     for (const host of BN_HOSTS) {
         try {
-            let url = `${host}/api/v3/klines?symbol=${symbol}BTC&interval=${interval}&limit=1000`;
+            let url = `${host}/api/v3/klines?symbol=${symbol}${quote}&interval=${interval}&limit=1000`;
             if (endTime) url += `&endTime=${endTime}`;
             const res = await fetchWithTimeout(url, 6000, signal);
             if (res.status === 400) return null;                    // 바이낸스에 없는 페어
@@ -644,7 +644,7 @@ function extendPair(st, signal) {
         if (signal && signal.aborted) throw abortErr();
         if (st.exhausted) return;
         const endTime = st.rows.length ? st.rows[0].t - 1 : null;
-        const data = await fetchKlines(st.symbol, TF_CONFIG[st.tf].bn, endTime, signal);
+        const data = await fetchKlines(st.symbol, TF_CONFIG[st.tf].bn, endTime, signal, st.quote);
         if (data === null) { st.missing = true; st.exhausted = true; return; }
         if (!Array.isArray(data) || data.length === 0) { st.exhausted = true; return; }
         const rows = data.map(x => ({ t: x[0], o: +x[1], h: +x[2], l: +x[3], c: +x[4], v: +x[5] }));
@@ -665,6 +665,60 @@ function buildPairData(st) {
         out.push({ time, open: r.o, high: r.h, low: r.l, close: r.c, volume: r.v });
     }
     return out;
+}
+
+// 바이낸스에 ALT/BTC 페어는 없고 ALT/USDT 만 있는 코인: (ALT/USDT) ÷ (BTC/USDT) 로 합성 (업비트보다 훨씬 빠름)
+function buildUsdtData(altSt, btcSt) {
+    const intraday = altSt.tf.startsWith('minutes');
+    const btcMap = new Map();
+    btcSt.rows.forEach(b => btcMap.set(b.t, b));
+    const out = [];
+    let last = null;
+    for (const a of altSt.rows) {
+        const b = btcMap.get(a.t);
+        if (!b) continue;
+        const time = intraday ? Math.floor(a.t / 1000) + 9 * 3600 : new Date(a.t).toISOString().slice(0, 10);
+        if (time === last) continue;
+        last = time;
+        const open = a.o / b.o, close = a.c / b.c;
+        const hi = a.h / b.h, lo = a.l / b.l;   // 같은 방향 극값끼리 나눠 가짜 피뢰침 억제
+        out.push({ time, open, high: Math.max(open, close, hi, lo), low: Math.min(open, close, hi, lo), close, volume: a.v });
+    }
+    return out;
+}
+
+async function loadFromBinanceUsdt(token, symbol, tf, cfg, signal, market) {
+    const altSt = getPairStore(symbol, tf, 'USDT');
+    const btcSt = getPairStore('BTC', tf, 'USDT');
+    const first = [];
+    if (altSt.rows.length === 0) first.push(extendPair(altSt, signal));
+    if (btcSt.rows.length === 0) first.push(extendPair(btcSt, signal));
+    await Promise.all(first);
+    if (token !== modalLoadToken) return true;
+    if (altSt.missing || altSt.rows.length === 0 || btcSt.rows.length === 0) { if (altSt.missing) binanceSkip.set(symbol + 'USDT', Date.now() + BN_SKIP_MS); return false; }
+    const altT = tickerData.find(t => t.market === market), btcT = tickerData.find(t => t.market === 'KRW-BTC');
+    if (!altT || !btcT) { await waitForTicker(market, signal); if (token !== modalLoadToken) return true; }
+    const aT = tickerData.find(t => t.market === market), bT = tickerData.find(t => t.market === 'KRW-BTC');
+    if (!aT || !bT) return false;
+    const ratio = (altSt.rows[altSt.rows.length - 1].c / btcSt.rows[btcSt.rows.length - 1].c) * bT.trade_price / aT.trade_price;
+    if (!(ratio > 0.75 && ratio < 1.33)) { binanceSkip.set(symbol + 'USDT', Date.now() + BN_MISMATCH_MS); return false; }
+
+    const label = 'Binance ALT/USDT÷BTC/USDT';
+    const more = () => !altSt.exhausted && altSt.rows.length < cfg.target;
+    const draw = (firstDraw, loadingMore) => renderModalChart(buildUsdtData(altSt, btcSt), firstDraw, loadingMore, label);
+    draw(true, more());
+    let guard = 0;
+    while (more() && guard++ < 30) {
+        try {
+            await extendPair(altSt, signal);
+            let g2 = 0;   // BTC 가 알트의 가장 오래된 캔들까지 덮도록
+            while (!btcSt.exhausted && g2++ < 6 && btcSt.rows[0].t > altSt.rows[0].t) await extendPair(btcSt, signal);
+        } catch (e) { break; }
+        if (token !== modalLoadToken) return true;
+        if (shouldRender(more())) draw(false, more());
+    }
+    if (token === modalLoadToken) draw(false, false);
+    return true;
 }
 
 /* ---- 업비트 KRW 캔들 (합성용) ---- */
@@ -1001,6 +1055,15 @@ async function fetchModalChartData() {
                     binanceSkip.set(symbol, Date.now() + BN_SKIP_MS);
                 }
             }
+            const usym = symbol + 'USDT';
+            if (!binanceSkipped(usym)) {
+                try {
+                    if (await loadFromBinanceUsdt(token, symbol, tf, cfg, signal, market)) return;
+                } catch (e) {
+                    if (stale()) return;
+                    binanceSkip.set(usym, Date.now() + BN_SKIP_MS);
+                }
+            }
         }
         if (stale()) return;
         await loadFromUpbit(token, market, tf, cfg, signal);
@@ -1208,4 +1271,4 @@ setInterval(loadData, 15000);
 document.addEventListener("DOMContentLoaded", () => loadChart("KRW-BTC")); // defer 된 tv.js 로드 후 실행
 </script>
 </body>
-</html>
+</html>
