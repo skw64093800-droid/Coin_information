@@ -124,6 +124,11 @@
             <div class="p-3 border-b border-gray-200 dark:border-gray-800">
                 <input id="modal-search" type="text" placeholder="검색 (코인명 또는 심볼)" oninput="filterModalList()" class="w-full px-3 py-2 rounded bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-sm text-gray-900 dark:text-white">
             </div>
+            <div class="px-3 py-2 border-b border-gray-200 dark:border-gray-800 flex gap-1.5 text-xs">
+                <button data-favf="all" onclick="setModalFavFilter('all')" class="modal-favf px-2.5 py-1 rounded font-bold transition">전체</button>
+                <button data-favf="1" onclick="setModalFavFilter('1')" class="modal-favf px-2.5 py-1 rounded font-bold transition">🔥 1단계</button>
+                <button data-favf="2" onclick="setModalFavFilter('2')" class="modal-favf px-2.5 py-1 rounded font-bold transition">💡 2단계</button>
+            </div>
             <div id="modal-coin-list" class="flex-1 overflow-y-auto divide-y divide-gray-200 dark:divide-gray-800 text-sm"></div>
         </div>
         <div class="flex-1 flex flex-col bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white transition-colors">
@@ -131,6 +136,8 @@
                 <div class="flex items-center gap-2">
                     <div id="modal-chart-title" class="text-lg font-bold">코인을 선택하세요</div>
                     <button onclick="fetchModalChartData()" class="text-xs bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 px-2 py-1 rounded transition" title="다시 불러오기">🔄</button>
+                    <button id="modal-fav1" onclick="toggleModalFav(1)" class="text-xs px-2.5 py-1 rounded font-bold transition">🔥 1단계</button>
+                    <button id="modal-fav2" onclick="toggleModalFav(2)" class="text-xs px-2.5 py-1 rounded font-bold transition">💡 2단계</button>
                 </div>
                 <div class="flex items-center gap-1.5 bg-gray-200 dark:bg-gray-950 p-1.5 rounded-lg border border-gray-300 dark:border-gray-800">
                     <button onclick="changeTimeframe('minutes/15', this)" class="modal-tf-btn px-3 py-1 rounded text-xs font-bold bg-gray-300 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-400 dark:hover:bg-gray-700 transition" data-type="minutes/15">15분봉</button>
@@ -870,7 +877,7 @@ function renderModalList(list) {
         const bgClass = isSelected ? 'bg-indigo-100 dark:bg-indigo-950/80 border-l-4 border-indigo-500 font-bold' : 'hover:bg-gray-100 dark:hover:bg-gray-800';
         return `
             <div onclick="selectModalCoin('${c.market}', '${c.korean_name}')" class="p-3 cursor-pointer transition ${bgClass}" data-market="${c.market}">
-                <div class="text-sm">${c.korean_name}</div>
+                <div class="text-sm">${c.korean_name}<span class="ml-1">${favBadge(c.market)}</span></div>
                 <div class="text-xs opacity-70">${c.market}</div>
             </div>
         `;
@@ -879,10 +886,47 @@ function renderModalList(list) {
 
 function filterModalList() {
     const query = document.getElementById('modal-search').value.toLowerCase();
-    const filtered = modalCoins.filter(c => c.korean_name.toLowerCase().includes(query) || c.market.toLowerCase().includes(query));
+    const fav = getInterestData();
+    const filtered = modalCoins.filter(c => {
+        if (modalFavFilter === '1' && !fav.stage1.includes(c.market)) return false;
+        if (modalFavFilter === '2' && !fav.stage2.includes(c.market)) return false;
+        return c.korean_name.toLowerCase().includes(query) || c.market.toLowerCase().includes(query);
+    });
     document.getElementById('modal-coin-count').innerText = filtered.length;
+    const box = document.getElementById('modal-coin-list');
+    const top = box.scrollTop;
     renderModalList(filtered);
+    box.scrollTop = top;
 }
+
+/* ---- 차트 보면서 관심종목(1단계/2단계) 바로 관리 ---- */
+let modalFavFilter = 'all';
+function favBadge(market) {
+    const f = getInterestData();
+    return f.stage1.includes(market) ? '🔥' : f.stage2.includes(market) ? '💡' : '';
+}
+function updateModalFavUI() {
+    const f = getInterestData(), m = modalCurrentMarket;
+    const on1 = !!m && f.stage1.includes(m), on2 = !!m && f.stage2.includes(m);
+    const off = 'bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-700';
+    const b1 = document.getElementById('modal-fav1'), b2 = document.getElementById('modal-fav2');
+    if (b1) { b1.className = 'text-xs px-2.5 py-1 rounded font-bold transition ' + (on1 ? 'bg-red-500 text-white' : off); b1.textContent = on1 ? '🔥 1단계 ✓' : '🔥 1단계'; }
+    if (b2) { b2.className = 'text-xs px-2.5 py-1 rounded font-bold transition ' + (on2 ? 'bg-blue-500 text-white' : off); b2.textContent = on2 ? '💡 2단계 ✓' : '💡 2단계'; }
+    document.querySelectorAll('.modal-favf').forEach(b => {
+        const active = b.getAttribute('data-favf') === modalFavFilter;
+        b.className = 'modal-favf px-2.5 py-1 rounded font-bold transition ' + (active ? 'bg-indigo-600 text-white' : off);
+    });
+}
+function refreshModalFav() {
+    if (!document.getElementById('modal-coin-list')) return;
+    updateModalFavUI();
+    if (modalCoins && modalCoins.length) filterModalList();
+}
+function toggleModalFav(stage) {
+    if (!modalCurrentMarket) return;
+    toggleInterest(modalCurrentMarket, stage);   // 기존 관심종목 저장/시트 동기화 그대로 사용
+}
+function setModalFavFilter(v) { modalFavFilter = v; refreshModalFav(); }
 
 async function selectModalCoin(market, name) {
     modalCurrentMarket = market;
@@ -897,6 +941,7 @@ async function selectModalCoin(market, name) {
         }
     });
 
+    updateModalFavUI();
     await fetchModalChartData();
 }
 
@@ -1197,6 +1242,7 @@ function toggleInterest(market, stage) {
     saveInterestData(interest);
     renderInterestAllList();
     renderInterestStages();
+    refreshModalFav();
 }
 
 function renderInterestStages() {
@@ -1263,6 +1309,7 @@ function renderInterestStages() {
             `;
         }).join('');
     }
+    refreshModalFav();
 }
 
 marketsPromise = init();
