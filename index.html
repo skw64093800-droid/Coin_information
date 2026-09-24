@@ -3,14 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <title>통합 투자 대시보드</title>
+    <link rel="preconnect" href="https://api.upbit.com">
+    <link rel="preconnect" href="https://unpkg.com">
+    <link rel="preconnect" href="https://s3.tradingview.com">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
         }
     </script>
-    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <script defer type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+    <script defer src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body id="body-theme" class="bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-gray-100 p-6 transition-colors duration-200">
 
@@ -110,7 +113,7 @@
 <!-- BTC 합성 차트 모달 -->
 <div id="synthetic-modal" class="fixed inset-0 bg-black/80 z-50 hidden flex flex-col">
     <div class="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 p-4 flex justify-between items-center text-gray-900 dark:text-white transition-colors">
-        <h2 class="font-bold text-lg">🚀 업비트 BTC 합성 차트 분석 (초고속 반응형)</h2>
+        <h2 class="font-bold text-lg">🚀 BTC 대비 차트 분석 (초고속 반응형)</h2>
         <button onclick="closeBtcSyntheticModal()" class="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded text-xs font-bold transition">닫기 ✕</button>
     </div>
     <div class="flex-1 flex overflow-hidden">
@@ -125,14 +128,15 @@
         </div>
         <div class="flex-1 flex flex-col bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white transition-colors">
             <div class="p-4 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center flex-wrap gap-2">
-                <div id="modal-chart-title" class="text-lg font-bold">코인을 선택하세요</div>
+                <div class="flex items-center gap-2">
+                    <div id="modal-chart-title" class="text-lg font-bold">코인을 선택하세요</div>
+                    <button onclick="fetchModalChartData()" class="text-xs bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 px-2 py-1 rounded transition" title="다시 불러오기">🔄</button>
+                </div>
                 <div class="flex items-center gap-1.5 bg-gray-200 dark:bg-gray-950 p-1.5 rounded-lg border border-gray-300 dark:border-gray-800">
-                    <button onclick="changeTimeframe('minutes/1', this)" class="modal-tf-btn px-3 py-1 rounded text-xs font-bold bg-gray-300 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-400 dark:hover:bg-gray-700 transition" data-type="minutes/1">1분봉</button>
-                    <button onclick="changeTimeframe('minutes/5', this)" class="modal-tf-btn px-3 py-1 rounded text-xs font-bold bg-gray-300 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-400 dark:hover:bg-gray-700 transition" data-type="minutes/5">5분봉</button>
-                    <button onclick="changeTimeframe('minutes/30', this)" class="modal-tf-btn px-3 py-1 rounded text-xs font-bold bg-gray-300 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-400 dark:hover:bg-gray-700 transition" data-type="minutes/30">30분봉</button>
+                    <button onclick="changeTimeframe('minutes/15', this)" class="modal-tf-btn px-3 py-1 rounded text-xs font-bold bg-gray-300 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-400 dark:hover:bg-gray-700 transition" data-type="minutes/15">15분봉</button>
                     <button onclick="changeTimeframe('minutes/60', this)" class="modal-tf-btn px-3 py-1 rounded text-xs font-bold bg-gray-300 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-400 dark:hover:bg-gray-700 transition" data-type="minutes/60">1시간봉</button>
+                    <button onclick="changeTimeframe('minutes/240', this)" class="modal-tf-btn px-3 py-1 rounded text-xs font-bold bg-gray-300 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-400 dark:hover:bg-gray-700 transition" data-type="minutes/240">4시간봉</button>
                     <button onclick="changeTimeframe('days', this)" class="modal-tf-btn px-3 py-1 rounded text-xs font-bold bg-gray-300 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-400 dark:hover:bg-gray-700 transition" data-type="days">일봉</button>
-                    <button onclick="changeTimeframe('weeks', this)" class="modal-tf-btn px-3 py-1 rounded text-xs font-bold bg-gray-300 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-400 dark:hover:bg-gray-700 transition" data-type="weeks">주봉</button>
                 </div>
             </div>
             <div class="bg-gray-200/50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-800 p-2 px-4 flex items-center justify-between text-xs">
@@ -223,14 +227,100 @@ function toggleTheme() {
 }
 initTheme();
 
-async function safeFetch(url) {
-    try {
-        const res = await fetch(url);
-        return await res.json();
-    } catch (e) {
-        const backupRes = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
-        return await backupRes.json();
+const UPBIT = "https://api.upbit.com/v1";
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function abortErr() { return new DOMException('Aborted', 'AbortError'); }
+
+// 타임아웃 + 외부 취소 신호(signal) 지원
+function fetchWithTimeout(url, ms = 8000, signal) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    const onAbort = () => ctrl.abort();
+    if (signal) { if (signal.aborted) ctrl.abort(); else signal.addEventListener('abort', onAbort, { once: true }); }
+    return fetch(url, { signal: ctrl.signal }).finally(() => {
+        clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', onAbort);
+    });
+}
+
+function abortableSleep(ms, signal) {
+    return new Promise((resolve, reject) => {
+        if (signal && signal.aborted) { reject(abortErr()); return; }
+        const timer = setTimeout(resolve, ms);
+        if (signal) signal.addEventListener('abort', () => { clearTimeout(timer); reject(abortErr()); }, { once: true });
+    });
+}
+
+async function fetchJson(url, ms, signal) {
+    const res = await fetchWithTimeout(url, ms, signal);
+    if (res.status === 418) throw new Error("업비트 일시 차단(418)");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    if (data && data.error) throw new Error("API 오류");
+    return data;
+}
+
+/*
+ * 업비트 시세 API는 브라우저(Origin 헤더 포함) 직접 호출이 10초당 1회로 제한됨 (공식 문서).
+ *  1) 직접 호출 가능한 순간이면 직접 호출 (가장 빠름)
+ *  2) 아니면 무료 CORS 프록시를 시도 (불안정하므로 짧은 타임아웃)
+ *  3) 모두 실패하면 다음 직접 호출 가능 시각까지 기다렸다가 직접 호출 (느려도 반드시 성공)
+ */
+const DIRECT_GAP = 10600;
+let lastDirectAt = 0;
+let directPending = 0;
+let directChain = Promise.resolve();
+
+function directCall(url, signal) {
+    directPending++;
+    const p = directChain.then(async () => {
+        if (signal && signal.aborted) throw abortErr();
+        const wait = lastDirectAt + DIRECT_GAP - Date.now();
+        if (wait > 0) await abortableSleep(wait, signal);
+        lastDirectAt = Date.now();          // 성공/실패와 무관하게 요청 직전에 슬롯 소비 기록
+        return await fetchJson(url, 8000, signal);
+    });
+    directChain = p.catch(() => {});
+    return p.finally(() => { directPending--; });
+}
+
+const PROXIES = [
+    { url: u => `https://api.cors.lol/?url=${encodeURIComponent(u)}`, parse: r => r.json() },
+    { url: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, parse: async r => JSON.parse((await r.json()).contents) }
+];
+let proxyIdx = 0;
+let gateChain = Promise.resolve();
+function gate(minGap = 150) {
+    const p = gateChain.then(() => sleep(minGap));
+    gateChain = p.catch(() => {});
+    return p;
+}
+
+async function viaProxy(url, signal) {
+    for (let k = 0; k < PROXIES.length; k++) {
+        if (signal && signal.aborted) throw abortErr();
+        const idx = (proxyIdx + k) % PROXIES.length;
+        try {
+            await gate();
+            const res = await fetchWithTimeout(PROXIES[idx].url(url), 5000, signal);
+            if (!res.ok) continue;
+            const data = await PROXIES[idx].parse(res);
+            if (data && data.error) continue;
+            proxyIdx = idx;
+            return data;
+        } catch (e) { if (signal && signal.aborted) throw e; }
     }
+    return null;
+}
+
+async function safeFetch(url, signal) {
+    if (directPending === 0 && Date.now() - lastDirectAt > DIRECT_GAP) {
+        try { return await directCall(url, signal); } catch (e) { if (signal && signal.aborted) throw e; }
+    }
+    const viaP = await viaProxy(url, signal);
+    if (viaP) return viaP;
+    return await directCall(url, signal);   // 마지막 수단(1회): 직접 호출 슬롯을 기다림. 이것도 실패하면 오류 → 🔄 재시도
 }
 
 /* --- 구글 시트 A5 셀 연동 로직 --- */
@@ -306,10 +396,17 @@ function saveInterestData(data) {
     syncInterestToSheet();
 }
 
+async function ensureMarkets() {
+    if (allMarkets.length > 0) return;
+    const data = await safeFetch(`${UPBIT}/market/all`);
+    if (!Array.isArray(data)) throw new Error("마켓 목록 오류");
+    allMarkets = data.filter(m => m.market.startsWith("KRW-"));
+}
+
+let marketsPromise = null;
 async function init() {
     try {
-        const data = await safeFetch("https://api.upbit.com/v1/market/all");
-        allMarkets = data.filter(m => m.market.startsWith("KRW-"));
+        await ensureMarkets();
         document.getElementById('coin-count').innerText = allMarkets.length;
         loadData();
     } catch(e) {
@@ -321,7 +418,7 @@ async function loadData() {
     if (allMarkets.length === 0) return;
     try {
         const codes = allMarkets.map(m => m.market).join(',');
-        tickerData = await safeFetch(`https://api.upbit.com/v1/ticker?markets=${codes}`);
+        tickerData = await safeFetch(`${UPBIT}/ticker?markets=${codes}`);
         
         const btc = tickerData.find(c => c.market === "KRW-BTC");
         btcChange = btc ? (btc.signed_change_rate * 100) : 0;
@@ -333,6 +430,7 @@ async function loadData() {
         renderCoinList();
         renderOutperform();
         document.getElementById('last-update').innerText = new Date().toLocaleTimeString();
+        fetchIndicators();
     } catch(e) {
         console.error("데이터 로딩 실패:", e);
     }
@@ -407,13 +505,16 @@ function renderOutperform() {
 
 async function fetchIndicators() {
     try {
-        const data = await safeFetch("https://api.upbit.com/v1/ticker?markets=KRW-USDT,KRW-BTC");
-        const rate = data.find(c => c.market === "KRW-USDT").trade_price;
-        const upbitBtc = data.find(c => c.market === "KRW-BTC").trade_price;
+        // 이미 받아 둔 전체 시세(tickerData)에서 뽑아 쓰므로 업비트 추가 요청 없음 (직접 호출 10초당 1회 제한 절약)
+        const usdt = tickerData.find(c => c.market === "KRW-USDT");
+        const btc = tickerData.find(c => c.market === "KRW-BTC");
+        if (!usdt || !btc) return;   // 첫 시세 로딩 후 loadData()가 다시 호출함
+        const rate = usdt.trade_price;
+        const upbitBtc = btc.trade_price;
         document.getElementById('top-rate').innerText = rate.toLocaleString() + "원";
         document.getElementById('top-upbit').innerText = upbitBtc.toLocaleString() + "원";
         
-        const binanceRes = await fetch("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT");
+        const binanceRes = await fetchWithTimeout("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", 6000);
         const binance = await binanceRes.json();
         const binanceBtc = parseFloat(binance.price);
         document.getElementById('top-binance').innerText = "$" + binanceBtc.toLocaleString(undefined, {maximumFractionDigits:0});
@@ -452,6 +553,21 @@ let modalCoins = [], modalCurrentData = [];
 let modalCurrentMarket = 'KRW-BTC', modalCurrentName = '비트코인';
 let modalCurrentTimeframe = 'minutes/60';
 let modalActiveIndicators = []; 
+let modalLoadToken = 0;
+
+/*
+ * 데이터 소스
+ *  1순위: 바이낸스 ALT/BTC 실제 페어 (진짜 고저가라 피뢰침 없음, 1회 1000캔들, 빠름)
+ *  2순위: 바이낸스에 없는 코인은 업비트 KRW 캔들로 ALT/BTC 합성 (업비트 요청 제한 때문에 최대 600캔들)
+ *  USE_BINANCE_PAIR 를 false 로 바꾸면 항상 업비트 합성만 사용
+ */
+const USE_BINANCE_PAIR = true;
+const TF_CONFIG = {
+    'minutes/15':  { label: '15분봉',  bn: '15m', target: 5000, upbitTarget: 600 },
+    'minutes/60':  { label: '1시간봉', bn: '1h',  target: 5000, upbitTarget: 600 },
+    'minutes/240': { label: '4시간봉', bn: '4h',  target: 3000, upbitTarget: 600 },
+    'days':        { label: '일봉',    bn: '1d',  target: 2000, upbitTarget: 600 }
+};
 
 const defaultIndicators = [{ period: 20, color: '#ffaa00' }, { period: 60, color: '#00aa00' }];
 
@@ -459,6 +575,163 @@ function getSavedIndicators() {
     const saved = localStorage.getItem('userIndicators');
     if (saved) { try { return JSON.parse(saved); } catch (e) { return defaultIndicators; } }
     return defaultIndicators;
+}
+
+/* ---- 공통: LRU 캐시 + 직렬 요청 체인 ---- */
+function lruGet(map, key, create, keep = 12) {
+    let v = map.get(key);
+    if (v) { map.delete(key); map.set(key, v); return v; }
+    v = create();
+    map.set(key, v);
+    while (map.size > keep) map.delete(map.keys().next().value);
+    return v;
+}
+function chained(st, job) {   // 이전 요청이 실패해도 체인이 죽지 않게
+    const p = st.chain.catch(() => {}).then(job);
+    st.chain = p.catch(() => {});
+    return p;
+}
+
+/* ---- 바이낸스 ALT/BTC 페어 ---- */
+const pairStores = new Map();
+const binanceSkip = new Map();   // 바이낸스에 없거나 실패한 종목은 10분간 건너뜀
+const BN_SKIP_MS = 10 * 60 * 1000;
+const binanceSkipped = sym => (binanceSkip.get(sym) || 0) > Date.now();
+const BN_HOSTS = ['https://api.binance.com', 'https://data-api.binance.vision'];
+
+function getPairStore(symbol, tf) {
+    return lruGet(pairStores, symbol + '|' + tf, () => ({ symbol, tf, rows: [], exhausted: false, missing: false, chain: Promise.resolve() }));
+}
+
+async function fetchKlines(symbol, interval, endTime, signal) {
+    let lastErr;
+    for (const host of BN_HOSTS) {
+        try {
+            let url = `${host}/api/v3/klines?symbol=${symbol}BTC&interval=${interval}&limit=1000`;
+            if (endTime) url += `&endTime=${endTime}`;
+            const res = await fetchWithTimeout(url, 6000, signal);
+            if (res.status === 400) return null;                    // 바이낸스에 없는 페어
+            if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; }
+            return await res.json();
+        } catch (e) { if (signal && signal.aborted) throw e; lastErr = e; }
+    }
+    throw lastErr || new Error('binance 실패');
+}
+
+// 티커가 같아도 다른 자산이거나 1000배 표기 종목일 수 있어서, 가격으로 자산 일치를 검증
+// (바이낸스 ALT/BTC 종가 × 업비트 BTC 원화가 ≈ 업비트 ALT 원화가, 김프/시차 감안 ±25%)
+const BN_MISMATCH_MS = 24 * 60 * 60 * 1000;
+function pairMatchesUpbit(market, st) {
+    const alt = tickerData.find(t => t.market === market);
+    const btc = tickerData.find(t => t.market === 'KRW-BTC');
+    if (!alt || !btc || !st.rows.length) return null;    // 검증 자료 없음 (통과시키지 않음)
+    const ratio = (st.rows[st.rows.length - 1].c * btc.trade_price) / alt.trade_price;
+    return ratio > 0.75 && ratio < 1.33;
+}
+
+// 첫 시세(tickerData)가 아직이면 잠깐 기다림 (검증 없이 바이낸스 데이터를 채택하지 않기 위해)
+async function waitForTicker(market, signal, ms = 6000) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+        if (tickerData.some(t => t.market === market) && tickerData.some(t => t.market === 'KRW-BTC')) return true;
+        await abortableSleep(200, signal);
+    }
+    return false;
+}
+
+function extendPair(st, signal) {
+    return chained(st, async () => {
+        if (signal && signal.aborted) throw abortErr();
+        if (st.exhausted) return;
+        const endTime = st.rows.length ? st.rows[0].t - 1 : null;
+        const data = await fetchKlines(st.symbol, TF_CONFIG[st.tf].bn, endTime, signal);
+        if (data === null) { st.missing = true; st.exhausted = true; return; }
+        if (!Array.isArray(data) || data.length === 0) { st.exhausted = true; return; }
+        const rows = data.map(x => ({ t: x[0], o: +x[1], h: +x[2], l: +x[3], c: +x[4], v: +x[5] }));
+        if (st.rows.length && rows[rows.length - 1].t >= st.rows[0].t) { st.exhausted = true; return; }  // 커서가 뒤로 안 가면 종료
+        st.rows = rows.concat(st.rows);
+        if (data.length < 1000) st.exhausted = true;
+    });
+}
+
+function buildPairData(st) {
+    const intraday = st.tf.startsWith('minutes');
+    const out = [];
+    let last = null;
+    for (const r of st.rows) {
+        const time = intraday ? Math.floor(r.t / 1000) + 9 * 3600 : new Date(r.t).toISOString().slice(0, 10);  // 분봉은 KST 표기
+        if (time === last) continue;
+        last = time;
+        out.push({ time, open: r.o, high: r.h, low: r.l, close: r.c, volume: r.v });
+    }
+    return out;
+}
+
+/* ---- 업비트 KRW 캔들 (합성용) ---- */
+const candleStores = new Map();
+
+function getStore(market, tf) {
+    const create = () => ({ market, tf, rows: [], seen: new Set(), cursor: null, exhausted: false, chain: Promise.resolve() });
+    if (market === 'KRW-BTC') {   // BTC는 모든 종목이 공유하므로 캐시에서 밀려나지 않게 별도 유지
+        const key = market + '|' + tf;
+        if (!candleStores.has(key)) candleStores.set(key, create());
+        return candleStores.get(key);
+    }
+    return lruGet(candleStores, market + '|' + tf, create, 24);
+}
+
+function extendStore(st, signal) {
+    return chained(st, async () => {
+        if (signal && signal.aborted) throw abortErr();
+        if (st.exhausted) return;
+        let url = `${UPBIT}/candles/${st.tf}?market=${st.market}&count=200`;
+        if (st.cursor) url += `&to=${encodeURIComponent(st.cursor)}`;
+        const data = await safeFetch(url, signal);
+        if (!Array.isArray(data)) throw new Error("캔들 응답 오류");
+        if (data.length === 0) { st.exhausted = true; return; }
+        let added = 0;
+        for (const d of data) {
+            const u = d.candle_date_time_utc;
+            if (st.seen.has(u)) continue;      // UTC 기준 중복 제거
+            st.seen.add(u);
+            st.rows.push({ u, k: d.candle_date_time_kst, o: d.opening_price, h: d.high_price, l: d.low_price, c: d.trade_price, v: d.candle_acc_trade_volume });
+            added++;
+        }
+        const next = data[data.length - 1].candle_date_time_utc + 'Z';
+        if (added === 0 || next === st.cursor || data.length < 200) st.exhausted = true;   // 커서 진행 검사
+        st.cursor = next;
+    });
+}
+
+function toChartTime(kstStr, isIntraday) {
+    if (!isIntraday) return kstStr.split('T')[0];
+    const [d, t] = kstStr.split('T');
+    const [y, m, day] = d.split('-').map(Number);
+    const [hh, mm] = t.split(':').map(Number);
+    return Date.UTC(y, m - 1, day, hh, mm) / 1000;    // KST 표기 그대로 보이도록
+}
+
+function buildSyntheticData(altStore, btcStore) {
+    const isIntraday = altStore.tf.startsWith('minutes');
+    const btcMap = new Map();
+    btcStore.rows.forEach(b => btcMap.set(b.u, b));     // 비교 키는 UTC
+    const out = [];
+    let lastTime = null;
+    for (let i = altStore.rows.length - 1; i >= 0; i--) {   // rows 는 최신→과거 순
+        const a = altStore.rows[i];
+        const b = btcMap.get(a.u);
+        if (!b) continue;
+        const time = toChartTime(a.k, isIntraday);
+        if (time === lastTime) continue;
+        lastTime = time;
+        const open = a.o / b.o;
+        const close = a.c / b.c;
+        // 같은 방향 극값끼리 나눠 두 자산의 공통 움직임을 상쇄 (알트고가/BTC저가 조합의 가짜 피뢰침 제거)
+        const high = Math.max(open, close, a.h / b.h, a.l / b.l);
+        const low = Math.min(open, close, a.h / b.h, a.l / b.l);
+        out.push({ time, open, high, low, close, volume: a.v });
+    }
+    return out;
 }
 
 function updateModalChartTheme() {
@@ -487,7 +760,7 @@ function initModalChart() {
     modalChart = LightweightCharts.createChart(container, {
         layout: { background: { type: 'solid', color: isDark ? '#111827' : '#ffffff' }, textColor: isDark ? '#9ca3af' : '#4b5563' },
         grid: { vertLines: { color: isDark ? '#1f2937' : '#f3f4f6' }, horzLines: { color: isDark ? '#1f2937' : '#f3f4f6' } },
-        timeScale: { timeVisible: true, secondsVisible: false }
+        timeScale: { timeVisible: true, secondsVisible: false, minBarSpacing: 0.2 }
     });
     modalCandleSeries = modalChart.addCandlestickSeries();
     modalVolumeSeries = modalChart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'volume' });
@@ -495,7 +768,8 @@ function initModalChart() {
     renderIndicatorUI();
 }
 
-function openBtcSyntheticModal() {
+// 관심종목 화면에서는 openBtcSyntheticModal(market, name) 한 번만 호출 (로딩 경합 방지)
+async function openBtcSyntheticModal(targetMarket, targetName) {
     document.getElementById('synthetic-modal').classList.remove('hidden');
     initModalChart();
     
@@ -503,10 +777,19 @@ function openBtcSyntheticModal() {
         if (modalChart) {
             const container = document.getElementById('modal-chart-container');
             modalChart.resize(container.clientWidth, container.clientHeight);
-            modalChart.timeScale().fitContent();
         }
     }, 50);
 
+    try {
+        if (allMarkets.length === 0) { await marketsPromise; await ensureMarkets(); }
+    } catch (e) {
+        document.getElementById('modal-chart-title').innerText = "종목 목록 로딩 실패 (🔄 눌러 다시 시도)";
+        return;
+    }
+    if (targetMarket) {
+        modalCurrentMarket = targetMarket;
+        modalCurrentName = targetName || targetMarket;
+    }
     loadModalCoins();
 }
 
@@ -584,72 +867,145 @@ async function changeTimeframe(tf, btn) {
     await fetchModalChartData();
 }
 
-async function fetchModalChartData() {
-    try {
-        const tfNameMap = { 'minutes/1': '1분봉', 'minutes/5': '5분봉', 'minutes/30': '30분봉', 'minutes/60': '1시간봉', 'days': '일봉', 'weeks': '주봉' };
-        const currentTfText = tfNameMap[modalCurrentTimeframe] || modalCurrentTimeframe;
+/* ---- 렌더링 ---- */
+let lastModalRenderAt = 0;
 
-        document.getElementById('modal-chart-title').innerText = `${modalCurrentName} / BTC [${currentTfText}] 로딩중...`;
+// first: 처음 그리는 경우(보이는 구간 맞춤) / 아니면 현재 보고 있는 시간 구간 유지
+function renderModalChart(data, first, loadingMore, sourceLabel) {
+    if (!data || data.length === 0) throw new Error("데이터 없음");
+    modalCurrentData = data;
 
-        const [altData, btcData] = await Promise.all([
-            safeFetch(`https://api.upbit.com/v1/candles/${modalCurrentTimeframe}?market=${modalCurrentMarket}&count=200`),
-            safeFetch(`https://api.upbit.com/v1/candles/${modalCurrentTimeframe}?market=KRW-BTC&count=200`)
-        ]);
+    const last = data[data.length - 1].close;
+    const precision = last > 0 ? Math.min(10, Math.max(2, Math.ceil(-Math.log10(last)) + 3)) : 6;
+    modalCandleSeries.applyOptions({ priceFormat: { type: 'price', precision, minMove: Math.pow(10, -precision) } });
 
-        if (!Array.isArray(altData) || !Array.isArray(btcData) || altData.length === 0 || btcData.length === 0) {
-            throw new Error("데이터 없음");
-        }
+    let keepRange = null;
+    if (!first && modalChart) { try { keepRange = modalChart.timeScale().getVisibleRange(); } catch (e) {} }
 
-        const btcMap = new Map();
-        btcData.forEach(b => btcMap.set(b.candle_date_time_kst || b.candle_date_time_utc, b));
-        
-        modalCurrentData = altData.reverse().map(a => {
-            const timeKey = a.candle_date_time_kst || a.candle_date_time_utc;
-            const btc = btcMap.get(timeKey);
-            if (!btc) return null;
-            
-            let timeValue;
-            if (modalCurrentTimeframe.startsWith('minutes')) {
-                timeValue = Math.floor(new Date(timeKey.replace('T', ' ')).getTime() / 1000);
-            } else {
-                timeValue = timeKey.split('T')[0];
-            }
+    modalCandleSeries.setData(data);
+    modalVolumeSeries.setData(data.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#ef4444' : '#3b82f6' })));
 
-            if (modalCurrentMarket === 'KRW-BTC') {
-                return {
-                    time: timeValue,
-                    open: 1, high: 1, low: 1, close: 1,
-                    volume: a.candle_acc_trade_volume
-                };
-            }
-
-            return {
-                time: timeValue,
-                open: a.opening_price / btc.opening_price,
-                high: a.high_price / btc.low_price,
-                low: a.low_price / btc.high_price,
-                close: a.trade_price / btc.trade_price,
-                volume: a.candle_acc_trade_volume
-            };
-        }).filter(d => d);
-
-        if (modalCurrentData.length === 0) {
-            throw new Error("정합성 데이터 없음");
-        }
-
-        modalCandleSeries.setData(modalCurrentData);
-        modalVolumeSeries.setData(modalCurrentData.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#ef4444' : '#3b82f6' })));
-        
-        if (modalChart) {
+    if (modalChart) {
+        if (first) {
             const container = document.getElementById('modal-chart-container');
             modalChart.resize(container.clientWidth, container.clientHeight);
-            modalChart.timeScale().fitContent();
+            const n = data.length;
+            if (n > 400) modalChart.timeScale().setVisibleLogicalRange({ from: n - 400, to: n + 3 });  // 처음엔 최근 400개, 왼쪽으로 스크롤/축소하면 더 봄
+            else modalChart.timeScale().fitContent();
+        } else if (keepRange) {
+            try { modalChart.timeScale().setVisibleRange(keepRange); } catch (e) {}
         }
+    }
 
-        document.getElementById('modal-chart-title').innerText = `${modalCurrentName} / BTC [${currentTfText}] (${modalCurrentData.length} 캔들)`;
-        updateAllIndicatorsData();
-    } catch (e) { 
-        document.getElementById('modal-chart-title').innerText = "로딩 실패 (다시 시도해주세요)"; 
+    document.getElementById('modal-chart-title').innerText =
+        `${modalCurrentName} / BTC [${TF_CONFIG[modalCurrentTimeframe].label}] (${data.length.toLocaleString()} 캔들 · ${sourceLabel}${loadingMore ? ' · 과거 불러오는 중...' : ''})`;
+    updateAllIndicatorsData();
+    lastModalRenderAt = performance.now();
+}
+
+function shouldRender(more) {   // 페이지마다 setData 하지 않고 500ms 간격으로만
+    return !more || performance.now() - lastModalRenderAt > 500;
+}
+
+async function loadFromBinance(token, symbol, tf, cfg, signal, market) {
+    const st = getPairStore(symbol, tf);
+    if (st.rows.length === 0) await extendPair(st, signal);   // 네트워크 실패는 throw → 업비트로 대체
+    if (token !== modalLoadToken) return true;
+    if (st.missing || st.rows.length === 0) { if (st.missing) binanceSkip.set(symbol, Date.now() + BN_SKIP_MS); return false; }
+    let match = pairMatchesUpbit(market, st);
+    if (match === null) {                                    // 시세가 아직 없으면 잠깐 기다렸다가 검증
+        await waitForTicker(market, signal);
+        if (token !== modalLoadToken) return true;
+        match = pairMatchesUpbit(market, st);
+    }
+    if (match !== true) {                                    // 다른 자산/표기이거나 검증 불가 → 업비트 합성으로
+        if (match === false) binanceSkip.set(symbol, Date.now() + BN_MISMATCH_MS);
+        return false;
+    }
+
+    const label = 'Binance ALT/BTC';
+    const more = () => !st.exhausted && st.rows.length < cfg.target;
+    renderModalChart(buildPairData(st), true, more(), label);
+
+    let guard = 0;
+    while (more() && guard++ < 30) {
+        try { await extendPair(st, signal); } catch (e) { break; }   // 일부라도 받은 데이터는 유지
+        if (token !== modalLoadToken) return true;
+        if (shouldRender(more())) renderModalChart(buildPairData(st), false, more(), label);
+    }
+    if (token === modalLoadToken) renderModalChart(buildPairData(st), false, false, label);
+    return true;
+}
+
+async function loadFromUpbit(token, market, tf, cfg, signal) {
+    const altStore = getStore(market, tf);
+    const btcStore = getStore('KRW-BTC', tf);
+    const target = cfg.upbitTarget;
+    const label = '업비트 합성';
+
+    const first = [];
+    if (altStore.rows.length === 0) first.push(extendStore(altStore, signal));
+    if (btcStore.rows.length === 0) first.push(extendStore(btcStore, signal));
+    await Promise.all(first);
+    if (token !== modalLoadToken) return;
+    if (altStore.rows.length === 0 || btcStore.rows.length === 0) throw new Error("데이터 없음");
+
+    const more = () => !altStore.exhausted && altStore.rows.length < target;
+    if (market === 'KRW-BTC') {
+        // BTC 자체는 기준이라 항상 1
+        renderModalChart(buildSyntheticData(altStore, btcStore), true, false, label);
+        return;
+    }
+    renderModalChart(buildSyntheticData(altStore, btcStore), true, more(), label);
+
+    let guard = 0;
+    while (more() && guard++ < 20) {
+        if (token !== modalLoadToken) return;                 // 이전 요청은 페이지 루프에서 바로 중단
+        try {
+            await extendStore(altStore, signal);
+            // BTC가 알트의 가장 오래된 캔들까지 덮을 때까지 이어받음 (알트만 앞서가서 캔들이 빠지는 것 방지)
+            let g2 = 0;
+            while (!btcStore.exhausted && g2++ < 3 && btcStore.rows[btcStore.rows.length - 1].u > altStore.rows[altStore.rows.length - 1].u) {
+                if (token !== modalLoadToken) return;
+                await extendStore(btcStore, signal);
+            }
+        } catch (e) { break; }
+        if (token !== modalLoadToken) return;
+        if (shouldRender(more())) renderModalChart(buildSyntheticData(altStore, btcStore), false, more(), label);
+    }
+    if (token === modalLoadToken) renderModalChart(buildSyntheticData(altStore, btcStore), false, false, label);
+}
+
+let modalAbort = null;
+async function fetchModalChartData() {
+    if (modalAbort) modalAbort.abort();          // 이전 코인/봉의 대기 중 요청(프록시, 직접호출 슬롯 대기 포함)까지 취소
+    modalAbort = new AbortController();
+    const signal = modalAbort.signal;
+    const token = ++modalLoadToken;              // 결과가 뒤늦게 와도 덮어쓰지 않게
+    const market = modalCurrentMarket, tf = modalCurrentTimeframe;
+    const cfg = TF_CONFIG[tf];
+    if (!cfg) return;
+    const stale = () => signal.aborted || token !== modalLoadToken;
+    const setTitle = txt => { if (!stale()) document.getElementById('modal-chart-title').innerText = txt; };
+
+    setTitle(`${modalCurrentName} / BTC [${cfg.label}] 로딩중...`);
+    try {
+        if (USE_BINANCE_PAIR && market !== 'KRW-BTC') {
+            const symbol = market.split('-')[1];
+            if (!binanceSkipped(symbol)) {
+                try {
+                    if (await loadFromBinance(token, symbol, tf, cfg, signal, market)) return;
+                } catch (e) {
+                    if (stale()) return;
+                    // 없는 페어(CORS 없는 400 응답 포함)이거나 접속 실패 → 잠시 건너뛰고 업비트 합성으로
+                    binanceSkip.set(symbol, Date.now() + BN_SKIP_MS);
+                }
+            }
+        }
+        if (stale()) return;
+        await loadFromUpbit(token, market, tf, cfg, signal);
+    } catch (e) {
+        setTitle("로딩 실패 (🔄 버튼을 눌러 다시 시도해주세요)");
     }
 }
 
@@ -707,11 +1063,12 @@ function updateAllIndicatorsData() {
     modalActiveIndicators.forEach(ind => {
         ind.series.applyOptions({ color: ind.color });
         const maData = [];
+        const p = Math.max(1, ind.period);
+        let sum = 0;
         for (let i = 0; i < modalCurrentData.length; i++) {
-            if (i >= ind.period - 1) {
-                const sum = modalCurrentData.slice(i - ind.period + 1, i + 1).reduce((acc, curr) => acc + curr.close, 0);
-                maData.push({ time: modalCurrentData[i].time, value: sum / ind.period });
-            }
+            sum += modalCurrentData[i].close;
+            if (i >= p) sum -= modalCurrentData[i - p].close;
+            if (i >= p - 1) maData.push({ time: modalCurrentData[i].time, value: sum / p });
         }
         ind.series.setData(maData);
     });
@@ -806,7 +1163,7 @@ function renderInterestStages() {
                     </div>
                     <div class="mt-2 flex justify-between items-center text-xs">
                         <span class="${color} font-bold">${rate}%</span>
-                        <button onclick="closeInterestModal(); openBtcSyntheticModal(); selectModalCoin('${market}', '${name}');" class="bg-red-600 hover:bg-red-500 text-white px-2 py-0.5 rounded text-[10px]">차트보기</button>
+                        <button onclick="closeInterestModal(); openBtcSyntheticModal('${market}', '${name}');" class="bg-red-600 hover:bg-red-500 text-white px-2 py-0.5 rounded text-[10px]">차트보기</button>
                     </div>
                 </div>
             `;
@@ -837,7 +1194,7 @@ function renderInterestStages() {
                     </div>
                     <div class="mt-2 flex justify-between items-center text-xs">
                         <span class="${color} font-bold">${rate}%</span>
-                        <button onclick="closeInterestModal(); openBtcSyntheticModal(); selectModalCoin('${market}', '${name}');" class="bg-blue-600 hover:bg-blue-500 text-white px-2 py-0.5 rounded text-[10px]">차트보기</button>
+                        <button onclick="closeInterestModal(); openBtcSyntheticModal('${market}', '${name}');" class="bg-blue-600 hover:bg-blue-500 text-white px-2 py-0.5 rounded text-[10px]">차트보기</button>
                     </div>
                 </div>
             `;
@@ -845,12 +1202,10 @@ function renderInterestStages() {
     }
 }
 
-init();
-fetchIndicators();
+marketsPromise = init();
 fetchInterestFromSheet(); // 시작할 때 구글 시트 A5 셀 데이터 가져오기
 setInterval(loadData, 15000); 
-setInterval(fetchIndicators, 15000); 
-loadChart("KRW-BTC");
+document.addEventListener("DOMContentLoaded", () => loadChart("KRW-BTC")); // defer 된 tv.js 로드 후 실행
 </script>
 </body>
 </html>
