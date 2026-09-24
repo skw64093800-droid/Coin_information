@@ -408,11 +408,48 @@ async function ensureMarkets() {
     const data = await safeFetch(`${UPBIT}/market/all`);
     if (!Array.isArray(data)) throw new Error("마켓 목록 오류");
     allMarkets = data.filter(m => m.market.startsWith("KRW-"));
+    try { localStorage.setItem('marketsCache', JSON.stringify(allMarkets)); } catch (e) {}
 }
 
 let marketsPromise = null;
+// 지난번에 받아둔 종목/시세로 먼저 화면을 채우고, 이번 접속의 첫 업비트 요청은 시세 갱신에 씀
+// (업비트는 브라우저 요청을 10초에 1번만 받아서, 종목목록+시세를 연달아 받으면 10초 넘게 기다림)
+function showCachedData() {
+    try {
+        const t = JSON.parse(localStorage.getItem('tickerCache') || 'null');
+        if (!Array.isArray(t) || t.length < 50) return;
+        tickerData = t;
+        const btc = tickerData.find(c => c.market === "KRW-BTC");
+        btcChange = btc ? (btc.signed_change_rate * 100) : 0;
+        document.getElementById('btc-rate-header').innerText = btcChange.toFixed(2) + "%";
+        document.getElementById('btc-rate-body').innerText = btcChange.toFixed(2) + "%";
+        updateStats(); renderCoinList(); renderOutperform();
+        document.getElementById('last-update').innerText = "이전 데이터 (갱신 중...)";
+    } catch (e) {}
+}
+async function refreshMarketsInBackground() {
+    try {
+        const data = await safeFetch(`${UPBIT}/market/all`);
+        if (!Array.isArray(data)) return;
+        const list = data.filter(m => m.market.startsWith("KRW-"));
+        if (list.length < 50) return;
+        allMarkets = list;
+        localStorage.setItem('marketsCache', JSON.stringify(list));
+        document.getElementById('coin-count').innerText = allMarkets.length;
+    } catch (e) {}
+}
 async function init() {
     try {
+        let cached = null;
+        try { cached = JSON.parse(localStorage.getItem('marketsCache') || 'null'); } catch (e) {}
+        if (Array.isArray(cached) && cached.length > 50) {
+            allMarkets = cached;
+            document.getElementById('coin-count').innerText = allMarkets.length;
+            showCachedData();
+            loadData();
+            setTimeout(refreshMarketsInBackground, 20000);
+            return;
+        }
         await ensureMarkets();
         document.getElementById('coin-count').innerText = allMarkets.length;
         loadData();
@@ -421,8 +458,10 @@ async function init() {
     }
 }
 
+let loadingData = false;
 async function loadData() {
-    if (allMarkets.length === 0) return;
+    if (allMarkets.length === 0 || loadingData) return;
+    loadingData = true;
     try {
         const codes = allMarkets.map(m => m.market).join(',');
         tickerData = await safeFetch(`${UPBIT}/ticker?markets=${codes}`);
@@ -437,10 +476,11 @@ async function loadData() {
         renderCoinList();
         renderOutperform();
         document.getElementById('last-update').innerText = new Date().toLocaleTimeString();
+        try { localStorage.setItem('tickerCache', JSON.stringify(tickerData)); } catch (e) {}
         fetchIndicators();
     } catch(e) {
         console.error("데이터 로딩 실패:", e);
-    }
+    } finally { loadingData = false; }
 }
 
 function renderCoinList() {
